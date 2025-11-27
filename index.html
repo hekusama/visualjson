@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vanilla JS JSON Builder</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons (Vanilla Version) -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        .dragging { opacity: 0.5; }
+        
+        /* Drop Indicator Styles */
+        #drop-indicator {
+            position: fixed;
+            height: 4px;
+            background-color: #9333ea; /* purple-600 */
+            border-radius: 2px;
+            pointer-events: none;
+            z-index: 100;
+            display: none;
+            box-shadow: 0 0 8px rgba(147, 51, 234, 0.6);
+            transition: top 0.1s, left 0.1s, width 0.1s;
+        }
+        #drop-indicator::before {
+            content: '';
+            position: absolute;
+            left: -6px;
+            top: -4px;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background-color: #9333ea;
+            border: 2px solid white;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        .animate-fade-in {
+            animation: fadeIn 0.2s ease-out;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 h-screen w-screen overflow-hidden font-sans flex">
+
+    <!-- Drop Indicator Element -->
+    <div id="drop-indicator"></div>
+
+    <!-- Sidebar -->
+    <div class="w-64 bg-slate-100 border-r border-slate-200 flex flex-col shadow-inner z-10 h-full shrink-0 relative">
+        <div class="p-4 border-b border-slate-200 bg-white">
+            <h1 class="font-bold text-slate-800 flex items-center gap-2">
+                <i data-lucide="braces" class="text-purple-600 w-5 h-5"></i> JSON Builder
+            </h1>
+            <p class="text-xs text-slate-500 mt-1">Drag blocks to workspace</p>
+        </div>
+        
+        <div class="p-4 overflow-y-auto flex-1" id="sidebar-content">
+            <!-- Sidebar items injected here -->
+        </div>
+        
+        <!-- Trash Zone -->
+        <div id="trash-zone" class="hidden absolute inset-0 bg-red-100/85 border-2 border-red-500 z-50 flex flex-col items-center justify-center text-red-600 backdrop-blur-sm transition-all duration-200">
+            <div class="bg-white p-4 rounded-full shadow-lg mb-4">
+                <i data-lucide="trash-2" class="text-red-500 w-12 h-12"></i>
+            </div>
+            <span class="font-bold text-lg">Drop to Remove</span>
+        </div>
+    </div>
+
+    <!-- Main Area -->
+    <div class="flex-1 flex flex-col md:flex-row h-full overflow-hidden">
+        <!-- Canvas -->
+        <div class="flex-1 h-full bg-slate-50 p-6 overflow-y-auto relative bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:16px_16px]" 
+             id="canvas-container">
+            <div class="max-w-3xl mx-auto pb-20" id="canvas-root">
+                <!-- Tree renders here -->
+            </div>
+
+            <!-- Floating Action Button for Templates -->
+            <button onclick="app.toggleTemplates(true)" 
+                    class="absolute bottom-6 left-6 bg-blue-600 text-white p-3 rounded-full shadow-lg hover:bg-blue-700 transition-all z-30 flex items-center gap-2 font-medium pr-5 group">
+                <i data-lucide="layout-template" class="w-5 h-5"></i>
+                <span class="max-w-0 overflow-hidden group-hover:max-w-xs transition-all duration-300 whitespace-nowrap">Templates</span>
+            </button>
+        </div>
+
+        <!-- Output Panel -->
+        <div class="w-full md:w-96 shrink-0 h-full bg-slate-900 text-slate-300 flex flex-col border-l border-slate-800 shadow-2xl">
+            <div class="p-4 border-b border-slate-800 flex flex-col gap-3 bg-slate-950">
+                <div class="flex justify-between items-center">
+                    <span class="font-mono text-sm font-semibold text-slate-400">output.json</span>
+                    <label class="flex items-center gap-2 text-xs cursor-pointer text-slate-400 hover:text-white transition-colors select-none">
+                        <input type="checkbox" id="pretty-print" checked class="w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 accent-purple-500">
+                        Pretty Print
+                    </label>
+                </div>
+                <div class="flex gap-2 w-full">
+                    <button onclick="app.downloadJson()" class="flex-1 flex justify-center items-center gap-2 px-3 py-1.5 rounded text-xs font-medium transition-all bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">
+                        <i data-lucide="download" class="w-3.5 h-3.5"></i> Download
+                    </button>
+                    <button id="copy-btn" onclick="app.copyJson()" class="flex-1 flex justify-center items-center gap-2 px-3 py-1.5 rounded text-xs font-medium transition-all bg-purple-600 hover:bg-purple-500 text-white">
+                        <i data-lucide="copy" class="w-3.5 h-3.5"></i> <span>Copy JSON</span>
+                    </button>
+                </div>
+            </div>
+            <div class="flex-1 overflow-auto p-4 font-mono text-sm">
+                <pre id="json-output" class="whitespace-pre-wrap break-all text-blue-300"></pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- Templates Modal -->
+    <div id="templates-modal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-3xl flex flex-col max-h-[85vh]">
+            <div class="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50 rounded-t-xl">
+                <div class="flex items-center gap-3">
+                    <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                        <i data-lucide="layout-template" class="text-blue-600 w-5 h-5"></i>
+                        Templates
+                    </h2>
+                    <button onclick="app.saveAsTemplate()" class="text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-md font-medium flex items-center gap-1 transition-colors">
+                        <i data-lucide="save" class="w-3 h-3"></i> Save Current
+                    </button>
+                </div>
+                <button onclick="app.toggleTemplates(false)" class="p-1 hover:bg-slate-200 rounded-full transition-colors text-slate-500">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            
+            <div class="p-6 overflow-y-auto" id="templates-list">
+                <!-- Templates injected here -->
+            </div>
+        </div>
+    </div>
+
+<script>
+    // --- Constants ---
+    const STORAGE_KEY = 'vanilla_json_templates';
+    
+    const DEFAULT_TEMPLATES = [
+        {
+            name: 'Empty Object',
+            description: 'Start fresh with a single empty root object.',
+            data: [{ id: 'root', type: 'object', key: 'root', value: '', children: [] }]
+        },
+        {
+            name: 'User Profile',
+            description: 'A standard user profile structure.',
+            data: [
+                {
+                    id: 'root', type: 'object', key: 'root', value: '', children: [
+                        { id: 'u1', type: 'string', key: 'id', value: 'user_123', children: [] },
+                        { id: 'u2', type: 'string', key: 'username', value: 'jdoe', children: [] },
+                        { id: 'u4', type: 'boolean', key: 'isActive', value: true, children: [] }
+                    ]
+                }
+            ]
+        },
+        {
+            name: 'Config Example',
+            description: 'Simple configuration object.',
+            data: [
+                {
+                    id: 'root', type: 'object', key: 'root', value: '', children: [
+                        { id: 'c1', type: 'string', key: 'env', value: 'dev', children: [] },
+                        { id: 'c2', type: 'number', key: 'port', value: 3000, children: [] }
+                    ]
+                }
+            ]
+        },
+        {
+            name: 'Character.ai',
+            description: 'A complete Character.ai card structure with metadata and extended character info.',
+            data: [
+                {
+                    id: 'root',
+                    type: 'object',
+                    key: 'root',
+                    value: '',
+                    children: [
+                        { id: 'f1', type: 'string', key: 'name', value: 'Nova', children: [] },
+                        { id: 'f3', type: 'string', key: 'description', value: 'Nova is an energetic space explorer with a playful personality.', children: [] },
+
+                        { id: 'f7', type: 'number', key: 'age', value: 22, children: [] },
+                        { id: 'f8', type: 'string', key: 'occupation', value: 'Space Explorer', children: [] },
+                        { id: 'f9', type: 'string', key: 'backstory', value: 'Nova grew up on a remote orbital station and has always dreamed of exploring distant galaxies.', children: [] },
+
+                        {
+                            id: 'f10',
+                            type: 'object',
+                            key: 'personality',
+                            value: '',
+                            children: [
+                                { id: 'f101', type: 'string', key: 'temperament', value: 'Energetic and curious', children: [] },
+                                { id: 'f102', type: 'string', key: 'communicationStyle', value: 'Casual and enthusiastic', children: [] },
+                                { id: 'f103', type: 'string', key: 'strengths', value: 'Optimistic, adaptable, creative', children: [] },
+                                { id: 'f104', type: 'string', key: 'weaknesses', value: 'Impulsive, distractible', children: [] }
+                            ]
+                        },
+
+                        {
+                            id: 'f11',
+                            type: 'array',
+                            key: 'likes',
+                            value: '',
+                            children: [
+                                { id: 'f111', type: 'string', key: '', value: 'Galaxies', children: [] },
+                                { id: 'f112', type: 'string', key: '', value: 'Star maps', children: [] },
+                                { id: 'f113', type: 'string', key: '', value: 'Adventure', children: [] }
+                            ]
+                        },
+
+                        {
+                            id: 'f12',
+                            type: 'array',
+                            key: 'dislikes',
+                            value: '',
+                            children: [
+                                { id: 'f121', type: 'string', key: '', value: 'Boredom', children: [] },
+                                { id: 'f122', type: 'string', key: '', value: 'Strict rules', children: [] }
+                            ]
+                        },
+
+                        {
+                            id: 'f13',
+                            type: 'object',
+                            key: 'appearance',
+                            value: '',
+                            children: [
+                                { id: 'f131', type: 'string', key: 'hair', value: 'Short silver hair', children: [] },
+                                { id: 'f132', type: 'string', key: 'eyes', value: 'Bright blue eyes', children: [] },
+                                { id: 'f133', type: 'string', key: 'height', value: '170 cm', children: [] },
+                                { id: 'f134', type: 'string', key: 'clothing', value: 'Futuristic explorer suit with glowing trims', children: [] }
+                            ]
+                        },
+
+                        {
+                            id: 'f4',
+                            type: 'array',
+                            key: 'tags',
+                            value: '',
+                            children: [
+                                { id: 'f41', type: 'string', key: '', value: 'Sci-Fi', children: [] },
+                                { id: 'f42', type: 'string', key: '', value: 'Adventure', children: [] }
+                            ]
+                        },
+
+                        {
+                            id: 'f5',
+                            type: 'array',
+                            key: 'sampleDialog',
+                            value: '',
+                            children: [
+                                { id: 'f51', type: 'string', key: '', value: 'Nova: Let’s go somewhere new today!', children: [] },
+                                { id: 'f52', type: 'string', key: '', value: 'You: Sure, lead the way!', children: [] }
+                            ]
+                        },
+
+                        {
+                            id: 'f6',
+                            type: 'object',
+                            key: 'metadata',
+                            value: '',
+                            children: [
+                                { id: 'f61', type: 'string', key: 'creator', value: 'anonymous', children: [] },
+                                { id: 'f62', type: 'string', key: 'version', value: '1.0.0', children: [] },
+                                { id: 'f63', type: 'boolean', key: 'public', value: true, children: [] }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ];
+
+    // --- Global State ---
+    const appState = {
+        tree: JSON.parse(JSON.stringify(DEFAULT_TEMPLATES[0].data)),
+        customTemplates: [],
+        isPretty: true,
+        dragTarget: { id: null, pos: null }
+    };
+
+    // Load Custom Templates
+    try {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (saved) {
+            appState.customTemplates = JSON.parse(saved);
+        }
+    } catch (e) {
+        console.error("Failed to load templates", e);
+    }
+
+    // --- Helper Functions ---
+    const generateId = () => Math.random().toString(36).substr(2, 9);
+
+    const createBlock = (type) => ({
+        id: generateId(),
+        type,
+        key: 'newKey',
+        value: type === 'boolean' ? true : type === 'number' ? 0 : '',
+        children: []
+    });
+
+    const findNodeAndParent = (nodes, id, parent = null) => {
+        for (const node of nodes) {
+            if (node.id === id) return { node, parent };
+            if (node.children) {
+                const result = findNodeAndParent(node.children, id, node);
+                if (result) return result;
+            }
+        }
+        return null;
+    };
+
+    const isDescendant = (nodes, sourceId, targetId) => {
+        const { node: sourceNode } = findNodeAndParent(nodes, sourceId);
+        if (!sourceNode) return false;
+        const check = (list) => {
+            for (const item of list) {
+                if (item.id === targetId) return true;
+                if (item.children && check(item.children)) return true;
+            }
+            return false;
+        }
+        return check(sourceNode.children || []);
+    };
+
+    const getColors = (type) => {
+        switch (type) {
+            case 'object': return { bg: 'bg-purple-500', border: 'border-purple-600', text: 'text-white' };
+            case 'array': return { bg: 'bg-orange-500', border: 'border-orange-600', text: 'text-white' };
+            case 'string': return { bg: 'bg-emerald-500', border: 'border-emerald-600', text: 'text-white' };
+            case 'number': return { bg: 'bg-blue-500', border: 'border-blue-600', text: 'text-white' };
+            case 'boolean': return { bg: 'bg-pink-500', border: 'border-pink-600', text: 'text-white' };
+            default: return { bg: 'bg-gray-500', border: 'border-gray-600', text: 'text-white' };
+        }
+    };
+
+    // --- Rendering ---
+
+    function renderBlock(node, parentType) {
+        const colors = getColors(node.type);
+        const isContainer = node.type === 'object' || node.type === 'array';
+        
+        let icon = '';
+        if(node.type === 'object') icon = 'braces';
+        else if(node.type === 'array') icon = 'brackets';
+        else if(node.type === 'string') icon = 'type';
+        else if(node.type === 'boolean') icon = 'check';
+        else if(node.type === 'number') icon = 'hash'; 
+
+        let html = `
+        <div class="js-block-wrapper relative flex flex-col mb-2 rounded-lg shadow-sm transition-all duration-200 ${isContainer ? 'mr-2' : ''}"
+             draggable="true"
+             data-id="${node.id}"
+             data-type="${node.type}"
+             ondragstart="app.handleDragStart(event, '${node.id}')"
+             ondragend="app.handleDragEnd(event)">
+            
+            <div class="flex items-center gap-2 p-2 rounded-lg ${colors.bg} ${colors.text} ${isContainer ? 'rounded-b-none' : ''} cursor-grab active:cursor-grabbing border-b-4 ${colors.border}"
+                 ondragover="app.handleDragOver(event, '${node.id}', false)"
+                 ondrop="app.handleDrop(event, '${node.id}')">
+                 
+                <i data-lucide="grip-vertical" class="opacity-50 w-4 h-4"></i>
+                ${icon !== 'hash' ? `<i data-lucide="${icon}" class="w-4 h-4"></i>` : `<span class="font-mono font-bold text-xs">123</span>`}
+                
+                ${parentType === 'object' ? `
+                <div class="flex items-center bg-black/20 rounded px-2 py-1 gap-2">
+                    <span class="text-xs opacity-75 font-mono">key:</span>
+                    <input type="text" value="${node.key}" 
+                           oninput="app.updateData('${node.id}', 'key', this.value)"
+                           class="bg-transparent border-none outline-none text-sm font-semibold w-24 placeholder-white/50 text-white" placeholder="key">
+                </div>` : ''}
+
+                ${!isContainer ? `
+                <div class="flex-1 min-w-[100px]">
+                    ${node.type === 'boolean' ? `
+                        <button onclick="app.toggleBoolean('${node.id}')" class="bg-black/20 hover:bg-black/30 px-3 py-1 rounded text-sm font-mono uppercase w-full text-left">
+                            ${node.value}
+                        </button>
+                    ` : `
+                        <input type="${node.type === 'number' ? 'number' : 'text'}" value="${node.value}" 
+                               oninput="app.updateData('${node.id}', 'value', this.value)"
+                               class="w-full bg-black/20 rounded px-2 py-1 text-sm outline-none placeholder-white/50 text-white" placeholder="value">
+                    `}
+                </div>` : `<span class="text-xs font-bold opacity-80 uppercase tracking-wider ml-1">${node.type}</span>`}
+
+                <div class="flex-1"></div>
+                <button onclick="app.deleteNode('${node.id}')" class="p-1 hover:bg-black/20 rounded transition-colors">
+                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                </button>
+            </div>
+
+            ${isContainer ? `
+            <div class="pl-4 p-2 min-h-[3rem] border-l-4 ${colors.border} rounded-b-lg bg-slate-50"
+                 ondragover="app.handleDragOver(event, '${node.id}', true)"
+                 ondrop="app.handleDrop(event, '${node.id}')">
+                ${node.children.length === 0 ? 
+                    `<div class="text-xs text-slate-400 p-2 border-2 border-dashed border-slate-200 rounded text-center pointer-events-none">Drop items here</div>` 
+                    : node.children.map(child => renderBlock(child, node.type)).join('')}
+            </div>` : ''}
+        </div>`;
+        
+        return html;
+    }
+
+    function renderSidebarItem(type, label, color, icon) {
+        return `
+        <div draggable="true" ondragstart="app.handleSidebarDragStart(event, '${type}')"
+             class="flex items-center gap-3 p-3 mb-2 rounded-lg cursor-grab active:cursor-grabbing bg-white border hover:shadow-md transition-all select-none border-l-4 ${color}">
+            <div class="p-1.5 rounded bg-slate-100">
+                ${icon === '123' ? '<span class="font-mono font-bold text-slate-600 text-sm">123</span>' : `<i data-lucide="${icon}" class="text-slate-600 w-4 h-4"></i>`}
+            </div>
+            <span class="font-medium text-slate-700 text-sm">${label}</span>
+        </div>`;
+    }
+
+    function renderTemplates() {
+        const container = document.getElementById('templates-list');
+        
+        // HTML for Default Templates
+        const defaultHtml = DEFAULT_TEMPLATES.map((template, index) => `
+            <div class="border border-slate-200 rounded-lg p-4 hover:border-blue-400 hover:shadow-md transition-all group bg-white">
+                <div class="flex items-start justify-between mb-2">
+                    <div class="p-2 bg-blue-100 text-blue-600 rounded-lg">
+                        <i data-lucide="file-json" class="w-5 h-5"></i>
+                    </div>
+                    <button onclick="app.loadTemplate('default', ${index})" class="px-3 py-1.5 bg-white text-slate-600 text-xs font-bold border border-slate-200 rounded hover:bg-blue-600 hover:text-white hover:border-blue-600 transition-all">
+                        Load
+                    </button>
+                </div>
+                <h3 class="font-bold text-slate-800 mb-1">${template.name}</h3>
+                <p class="text-xs text-slate-500 leading-relaxed">${template.description}</p>
+            </div>
+        `).join('');
+
+        // HTML for Custom Templates
+        const customHtml = appState.customTemplates.length === 0 
+            ? `<div class="col-span-full text-center p-8 text-slate-400 border-2 border-dashed border-slate-200 rounded-lg">No saved templates yet</div>`
+            : appState.customTemplates.map((template, index) => `
+            <div class="border border-purple-200 rounded-lg p-4 hover:border-purple-400 hover:shadow-md transition-all group bg-purple-50/50 hover:bg-white">
+                <div class="flex items-start justify-between mb-2">
+                    <div class="p-2 bg-purple-100 text-purple-600 rounded-lg">
+                        <i data-lucide="user" class="w-5 h-5"></i>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="app.deleteTemplate(${index})" class="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-all" title="Delete">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                        </button>
+                        <button onclick="app.loadTemplate('custom', ${index})" class="px-3 py-1.5 bg-white text-purple-600 text-xs font-bold border border-purple-200 rounded hover:bg-purple-600 hover:text-white hover:border-purple-600 transition-all">
+                            Load
+                        </button>
+                    </div>
+                </div>
+                <h3 class="font-bold text-slate-800 mb-1">${template.name}</h3>
+                <p class="text-xs text-slate-500 leading-relaxed">${template.description || 'User saved template'}</p>
+                <div class="text-[10px] text-slate-400 mt-2">${template.date || ''}</div>
+            </div>
+        `).join('');
+
+        container.innerHTML = `
+            <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 col-span-full">Standard Templates</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 w-full mb-8">
+                ${defaultHtml}
+            </div>
+            
+            <div class="flex items-center justify-between col-span-full mb-3 border-t pt-6">
+                <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider">My Templates</h3>
+                <span class="text-xs text-slate-400">${appState.customTemplates.length} saved</span>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 w-full">
+                ${customHtml}
+            </div>
+        `;
+        
+        lucide.createIcons();
+    }
+
+    function renderApp() {
+        const container = document.getElementById('canvas-root');
+        container.innerHTML = appState.tree.map(node => renderBlock(node, null)).join('');
+        generateJson();
+        lucide.createIcons();
+    }
+
+    function renderSidebar() {
+        const sb = document.getElementById('sidebar-content');
+        sb.innerHTML = `
+            <div class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Containers</div>
+            ${renderSidebarItem('object', 'Object', 'border-purple-500', 'braces')}
+            ${renderSidebarItem('array', 'Array', 'border-orange-500', 'brackets')}
+            <div class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 mt-6">Values</div>
+            ${renderSidebarItem('string', 'String', 'border-emerald-500', 'type')}
+            ${renderSidebarItem('number', 'Number', 'border-blue-500', '123')}
+            ${renderSidebarItem('boolean', 'Boolean', 'border-pink-500', 'check')}
+        `;
+        lucide.createIcons();
+    }
+
+    function generateJson() {
+        const parseNode = (node) => {
+            if (node.type === 'object') {
+                const obj = {};
+                node.children.forEach(child => { obj[child.key] = parseNode(child); });
+                return obj;
+            } else if (node.type === 'array') {
+                return node.children.map(parseNode);
+            } else {
+                return node.type === 'number' ? Number(node.value) : node.value;
+            }
+        };
+
+        try {
+            const result = parseNode(appState.tree[0]);
+            const jsonStr = JSON.stringify(result, null, appState.isPretty ? 2 : 0);
+            document.getElementById('json-output').textContent = jsonStr;
+        } catch (e) {
+            document.getElementById('json-output').textContent = "Error";
+        }
+    }
+
+    // --- Logic & Actions ---
+
+    const app = {
+        updateData: (id, field, val) => {
+            const { node } = findNodeAndParent(appState.tree, id);
+            if (node) {
+                node[field] = val;
+                generateJson(); 
+            }
+        },
+        
+        toggleBoolean: (id) => {
+            const { node } = findNodeAndParent(appState.tree, id);
+            if (node) {
+                node.value = !node.value;
+                renderApp();
+            }
+        },
+
+        deleteNode: (id) => {
+            if(id === 'root') return;
+            const deleteRecursive = (nodes) => {
+                return nodes.filter(n => n.id !== id).map(n => {
+                    if(n.children) n.children = deleteRecursive(n.children);
+                    return n;
+                });
+            };
+            appState.tree = deleteRecursive(appState.tree);
+            renderApp();
+        },
+
+        // --- Templates Logic ---
+        toggleTemplates: (show) => {
+            const modal = document.getElementById('templates-modal');
+            if (show) {
+                renderTemplates(); // Refresh list when opening
+                modal.classList.remove('hidden');
+            } else {
+                modal.classList.add('hidden');
+            }
+        },
+
+        loadTemplate: (type, index) => {
+            let data;
+            if (type === 'default') {
+                data = DEFAULT_TEMPLATES[index].data;
+            } else {
+                data = appState.customTemplates[index].data;
+            }
+            appState.tree = JSON.parse(JSON.stringify(data));
+            app.toggleTemplates(false);
+            renderApp();
+        },
+
+        saveAsTemplate: () => {
+            const name = prompt("Enter a name for your template:");
+            if (!name) return;
+
+            const newTemplate = {
+                name: name,
+                description: 'Custom saved template',
+                date: new Date().toLocaleDateString(),
+                data: JSON.parse(JSON.stringify(appState.tree))
+            };
+
+            appState.customTemplates.push(newTemplate);
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(appState.customTemplates));
+            
+            renderTemplates(); // Refresh UI
+            alert('Template saved successfully!');
+        },
+
+        deleteTemplate: (index) => {
+            if(!confirm('Are you sure you want to delete this template?')) return;
+            
+            appState.customTemplates.splice(index, 1);
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(appState.customTemplates));
+            renderTemplates();
+        },
+
+        // --- Drag & Drop ---
+        handleDragStart: (e, id) => {
+            e.stopPropagation();
+            e.dataTransfer.setData('json-block-id', id);
+            e.target.closest('[draggable]').classList.add('dragging');
+        },
+
+        handleDragEnd: (e) => {
+            e.target.closest('[draggable]').classList.remove('dragging');
+            document.getElementById('drop-indicator').style.display = 'none';
+        },
+
+        handleSidebarDragStart: (e, type) => {
+            e.dataTransfer.setData('json-block-type', type);
+        },
+
+        handleDragOver: (e, targetId, isContainerBody) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const indicator = document.getElementById('drop-indicator');
+            const targetEl = e.currentTarget; 
+            const rect = targetEl.getBoundingClientRect();
+            
+            if (isContainerBody) {
+                appState.dragTarget = { id: targetId, pos: 'inside' };
+                const lastChild = targetEl.lastElementChild;
+                let top;
+                if (!lastChild || lastChild.classList.contains('pointer-events-none')) {
+                    top = rect.top + 10; 
+                } else {
+                    const lastRect = lastChild.getBoundingClientRect();
+                    top = lastRect.bottom;
+                }
+                
+                indicator.style.top = `${top}px`;
+                indicator.style.left = `${rect.left + 20}px`;
+                indicator.style.width = `${rect.width - 20}px`;
+                indicator.style.display = 'block';
+                return;
+            }
+
+            const offsetY = e.clientY - rect.top;
+            const threshold = rect.height / 2;
+            
+            if (offsetY < threshold) {
+                appState.dragTarget = { id: targetId, pos: 'before' };
+                indicator.style.top = `${rect.top - 2}px`;
+            } else {
+                appState.dragTarget = { id: targetId, pos: 'after' };
+                indicator.style.top = `${rect.bottom - 2}px`;
+            }
+            
+            indicator.style.left = `${rect.left}px`;
+            indicator.style.width = `${rect.width}px`;
+            indicator.style.display = 'block';
+        },
+
+        handleDrop: (e, targetId) => {
+            e.preventDefault();
+            e.stopPropagation();
+            document.getElementById('drop-indicator').style.display = 'none';
+
+            const sourceId = e.dataTransfer.getData('json-block-id');
+            const sourceType = e.dataTransfer.getData('json-block-type');
+            const { pos, id: finalTargetId } = appState.dragTarget;
+
+            if (!finalTargetId) return;
+
+            const insertNode = (nodeToInsert) => {
+                const { node: targetNode, parent: targetParent } = findNodeAndParent(appState.tree, finalTargetId);
+                
+                if (pos === 'inside') {
+                    if (targetNode && (targetNode.type === 'object' || targetNode.type === 'array')) {
+                        targetNode.children.push(nodeToInsert);
+                    }
+                } else if (targetParent) {
+                    const index = targetParent.children.findIndex(n => n.id === finalTargetId);
+                    if (pos === 'before') {
+                        targetParent.children.splice(index, 0, nodeToInsert);
+                    } else {
+                        targetParent.children.splice(index + 1, 0, nodeToInsert);
+                    }
+                }
+            };
+
+            if (!sourceId && sourceType) {
+                insertNode(createBlock(sourceType));
+            } 
+            else if (sourceId) {
+                if (sourceId === finalTargetId) return;
+                if (isDescendant(appState.tree, sourceId, finalTargetId)) return;
+
+                const { parent: oldParent } = findNodeAndParent(appState.tree, sourceId);
+                if (!oldParent) return; 
+                const oldIndex = oldParent.children.findIndex(n => n.id === sourceId);
+                const [nodeToMove] = oldParent.children.splice(oldIndex, 1);
+
+                const { node: checkNode } = findNodeAndParent(appState.tree, finalTargetId);
+                if (checkNode) {
+                    insertNode(nodeToMove);
+                } else {
+                    oldParent.children.splice(oldIndex, 0, nodeToMove);
+                }
+            }
+            renderApp();
+        },
+
+        downloadJson: () => {
+            const text = document.getElementById('json-output').textContent;
+            const blob = new Blob([text], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'data.json';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        },
+
+        copyJson: () => {
+            const text = document.getElementById('json-output').textContent;
+            const btn = document.getElementById('copy-btn');
+            const originalContent = btn.innerHTML;
+            
+            const showSuccess = () => {
+                btn.innerHTML = `<i data-lucide="check" class="w-3.5 h-3.5"></i> Copied!`;
+                btn.classList.remove('bg-purple-600', 'hover:bg-purple-500');
+                btn.classList.add('bg-green-600');
+                lucide.createIcons();
+                setTimeout(() => {
+                    btn.innerHTML = originalContent;
+                    btn.classList.add('bg-purple-600', 'hover:bg-purple-500');
+                    btn.classList.remove('bg-green-600');
+                    lucide.createIcons();
+                }, 2000);
+            };
+
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(showSuccess).catch(() => {
+                    try {
+                        const textarea = document.createElement('textarea');
+                        textarea.value = text;
+                        textarea.style.position = 'fixed';
+                        document.body.appendChild(textarea);
+                        textarea.focus();
+                        textarea.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(textarea);
+                        showSuccess();
+                    } catch (err) { console.error(err); }
+                });
+            } else {
+                try {
+                    const textarea = document.createElement('textarea');
+                    textarea.value = text;
+                    textarea.style.position = 'fixed';
+                    document.body.appendChild(textarea);
+                    textarea.focus();
+                    textarea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                    showSuccess();
+                } catch (err) { console.error(err); }
+            }
+        }
+    };
+
+    // --- Trash Zone Listeners ---
+    const sidebar = document.querySelector('.w-64');
+    const trashZone = document.getElementById('trash-zone');
+    let dragCounter = 0;
+
+    sidebar.addEventListener('dragenter', (e) => {
+        if (e.dataTransfer.types.includes('json-block-id')) {
+            dragCounter++;
+            trashZone.classList.remove('hidden');
+        }
+    });
+
+    sidebar.addEventListener('dragleave', (e) => {
+        dragCounter--;
+        if (dragCounter === 0) trashZone.classList.add('hidden');
+    });
+
+    sidebar.addEventListener('dragover', (e) => e.preventDefault());
+
+    sidebar.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dragCounter = 0;
+        trashZone.classList.add('hidden');
+        const id = e.dataTransfer.getData('json-block-id');
+        if (id) app.deleteNode(id);
+    });
+
+    document.getElementById('pretty-print').addEventListener('change', (e) => {
+        appState.isPretty = e.target.checked;
+        generateJson();
+    });
+
+    // --- Init ---
+    renderSidebar();
+    renderApp();
+
+</script>
+</body>
+</html>
